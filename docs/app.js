@@ -6,9 +6,9 @@ const MODELS = [
   ["Qwen3.5-2B", "4GB 显存推荐"],
   ["Qwen3.5-4B", "6GB 以上显存推荐"],
   ["Qwen3.5-9B", "8GB 以上显存，效果最好"],
-  ["Qwen2.5-1.5B-Instruct", "iPhone / 手机推荐"],
+  ["Qwen2.5-1.5B-Instruct", "8GB 内存的 iPhone 可试"],
   ["Qwen3-0.6B", "容易答非所问"],
-  ["Qwen2.5-0.5B-Instruct", "最省内存，手机撑不住时用"],
+  ["Qwen2.5-0.5B-Instruct", "iPhone 14 等 6GB 手机推荐"],
   ["Qwen3-1.7B", ""],
   ["Qwen3-4B", ""],
   ["Qwen3-8B", ""],
@@ -61,8 +61,10 @@ const isMobile =
   /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
-// iPhone 上超过约 2GB 的模型生成时会被系统回收显卡；Qwen3.5 实际占用远超标称值
+// iPhone 上超过约 2GB 的模型生成时会被系统回收显卡；Qwen3.5 实际占用远超标称值。
+// 6GB 内存的 iPhone 14 / 15 连 1.5B（约 1.6GB）的第一次回复都撑不住，自动选择只落到 0.5B。
 const MOBILE_MAX_MB = 2000;
+const MOBILE_SAFE_MB = 1100;
 
 // iOS 切到后台或锁屏后会回收 WebGPU 设备
 let wentHidden = false;
@@ -109,14 +111,18 @@ function fillModelSelect() {
     $("model").add(opt);
   }
   const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-  const options = [...$("model").options].map((o) => o.value);
-  if (isMobile && options.includes("Qwen2.5-1.5B-Instruct")) $("model").value = "Qwen2.5-1.5B-Instruct";
-  if (options.includes(saved.model)) $("model").value = saved.model;
+  const options = [...$("model").options];
   if (isMobile) {
     $("ctx").value = "4096";
     $("ctx").disabled = true;
-  } else if (saved.ctx) {
-    $("ctx").value = saved.ctx;
+    // 旧版本会把 1.5B 自动写进设置。没手动选过模型时，不沿用那个值。
+    const savedOpt = options.find((o) => o.value === saved.model);
+    const keepSaved = saved.modelChosen && savedOpt;
+    const fallback = options.find((o) => o.value === "Qwen2.5-0.5B-Instruct") || options[0];
+    $("model").value = (keepSaved ? savedOpt : fallback)?.value || "";
+  } else {
+    if (options.some((o) => o.value === saved.model)) $("model").value = saved.model;
+    if (saved.ctx) $("ctx").value = saved.ctx;
   }
   if (saved.mirror) $("mirror").checked = true;
 }
@@ -126,6 +132,7 @@ function selectSmallerModel() {
   const current = Number(sel.selectedOptions[0]?.dataset.mb);
   const smaller = [...sel.options]
     .filter((o) => Number(o.dataset.mb) < current)
+    .filter((o) => !isMobile || Number(o.dataset.mb) <= MOBILE_SAFE_MB)
     .sort((a, b) => b.dataset.mb - a.dataset.mb)[0];
   if (smaller) sel.value = smaller.value;
   return smaller?.value;
@@ -193,6 +200,7 @@ async function loadEngine(base, ctx, mirror) {
     }),
   };
   const workerUrl = new URL("./llm-worker.js", import.meta.url);
+  if (isMobile) workerUrl.searchParams.set("prefill", "32");
   if (useMirror) {
     workerUrl.searchParams.set("mirror", "1");
     workerUrl.searchParams.set("mirrorBase", MIRROR);
@@ -408,9 +416,13 @@ function onGpuLost() {
   } else {
     const smaller = selectSmallerModel();
     msg = isMobile
-      ? "手机内存不够，系统强制回收了显卡，模型失效了。请先关掉其他 App 和 Safari 标签页，"
+      ? "手机内存不够，第一次回复时系统回收了显卡。iPhone 14 这类 6GB 内存的手机请用 Qwen2.5-0.5B。请先关掉其他 App 和 Safari 标签页，"
       : "显卡被重置了，模型已失效。通常是显存不够或显卡太老。请关掉其他占用显卡的网页或程序，";
     msg += smaller ? `已帮你换成更小的 ${smaller}，点「加载模型」重试。` : "然后点「加载模型」重试。";
+    if (smaller) {
+      const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, model: smaller, modelChosen: true }));
+    }
   }
   msg += "如果仍然失败，请完全退出浏览器后重新打开。";
   $("chat").hidden = true;
@@ -465,6 +477,11 @@ $("stage").addEventListener("change", (e) => {
     return;
   }
   switchStage(e.target.value);
+});
+
+$("model").addEventListener("change", () => {
+  const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, model: $("model").value, modelChosen: true }));
 });
 
 $("load").addEventListener("click", onLoad);
