@@ -6,6 +6,9 @@ const MODELS = [
   ["Qwen3.5-2B", "4GB 显存推荐"],
   ["Qwen3.5-4B", "6GB 以上显存推荐"],
   ["Qwen3.5-9B", "8GB 以上显存，效果最好"],
+  ["Qwen3.5-0.8B", "iPhone / 手机推荐"],
+  ["Qwen2.5-1.5B-Instruct", "手机可用，回答更稳但更慢"],
+  ["Qwen3-0.6B", "最省内存，但容易答非所问"],
   ["Qwen3-1.7B", ""],
   ["Qwen3-4B", ""],
   ["Qwen3-8B", ""],
@@ -53,9 +56,14 @@ function allowedInStage(chunk) {
 
 let f16 = false;
 
+const isMobile =
+  /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
 async function detectGpu() {
   if (!navigator.gpu) {
-    $("gpu-status").textContent = "当前浏览器不支持 WebGPU，请使用桌面版 Chrome 或 Edge 113 以上版本。";
+    $("gpu-status").textContent =
+      "当前浏览器不支持 WebGPU。电脑请用 Chrome / Edge 113 以上版本；iPhone / iPad 需要 iOS 26 以上的 Safari。";
     $("gpu-status").classList.add("error");
     $("load").disabled = true;
     return;
@@ -85,10 +93,11 @@ function fillModelSelect() {
     const record = known.get(fullModelId(base));
     if (!record) continue;
     const gb = (record.vram_required_MB / 1024).toFixed(1);
-    const opt = new Option(`${base}（约 ${gb}GB 显存${note ? "，" + note : ""}）`, base);
+    const opt = new Option(`${base}（约 ${gb}GB${note ? "，" + note : ""}）`, base);
     $("model").add(opt);
   }
   const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+  if (isMobile) $("model").value = "Qwen3.5-0.8B";
   if (saved.model) $("model").value = saved.model;
   if (saved.ctx) $("ctx").value = saved.ctx;
   if (saved.mirror) $("mirror").checked = true;
