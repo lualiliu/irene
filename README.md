@@ -1,8 +1,20 @@
 # 与若琳对话
 
-基于小说《光与太阳，风筝与风》的角色扮演网页：你是润彬，和若琳聊天。大模型通过 [WebLLM](https://github.com/mlc-ai/web-llm) 在浏览器里用 WebGPU 运行，并检索书中原文作为她的"记忆"（RAG），不需要服务器和 API Key。
+基于小说《光与太阳，风筝与风》的角色扮演网页：你是润彬，和若琳聊天。网页会检索书中原文作为她的"记忆"（RAG），回复可以由两种方式生成：
 
-## 使用
+- **本地运行**：大模型通过 [WebLLM](https://github.com/mlc-ai/web-llm) 在浏览器里用 WebGPU 运行，免费，不需要服务器和 API Key，但受显存限制只能用小模型。
+- **DeepSeek API**：填入自己的 [DeepSeek API Key](https://platform.deepseek.com/api_keys)，回复质量好得多，也不需要 WebGPU，任何手机都能用。
+
+## DeepSeek API
+
+「运行方式」选 DeepSeek API，填入 Key，点「开始对话」。
+
+- 模型：`deepseek-chat` 适合聊天；`deepseek-reasoner` 会先思考再回答，更慢、更贵。
+- Key 只保存在本浏览器的 localStorage 里（可取消「记住 Key」），由浏览器直接发给 `api.deepseek.com`，不经过任何中转服务器。
+- 每次发送会带上人物设定、8 段检索到的原文和最近至多约 12000 字的对话，约 2500–10000 token，对话越长越多。
+- 聊天界面下方的「换模型」可以随时切换运行方式。
+
+## 本地运行模型
 
 打开网页，选模型，点「加载模型」。首次会下载模型并缓存在浏览器里。
 
@@ -19,7 +31,7 @@
 - 手机上不列出 Qwen3.5 系列：它们第一次回复时实际占用的内存远超标称值（0.8B 标称 1.6GB，实测约 2.8GB），会导致页面崩溃。
 - 「时间点」决定若琳知道什么：初三时期只检索初中部分的章节，不会提前剧透。
 
-## 本地运行
+## 在本机启动网页
 
 ```powershell
 npm run serve        # 然后打开 http://localhost:8080

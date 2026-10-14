@@ -21,11 +21,15 @@ const MODELS = [
 const BUDGETS = {
   4096: { k: 4, historyChars: 2000, maxTokens: 300 },
   8192: { k: 7, historyChars: 6500, maxTokens: 400 },
+  // DeepSeek 上下文 64K 以上，主要受费用约束
+  api: { k: 8, historyChars: 12000, maxTokens: 400 },
 };
 
+const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 const QUERY_PREFIX = "为这个句子生成表示以用于检索相关文章：";
 const STORAGE_KEY = "guoruolin-chat-history";
 const SETTINGS_KEY = "guoruolin-chat-settings-v2";
+const API_KEY_STORAGE = "guoruolin-chat-deepseek-key";
 
 const $ = (id) => document.getElementById(id);
 
@@ -37,6 +41,10 @@ let stages = [];
 let stage = null;
 let budget = BUDGETS[4096];
 let modelId = "";
+let backend = "local";
+let apiKey = "";
+let apiModel = "deepseek-chat";
+let abortCtl = null;
 let generating = false;
 let history = [];
 
@@ -56,6 +64,7 @@ function allowedInStage(chunk) {
 // ---------- 初始化设置面板 ----------
 
 let f16 = false;
+let gpuOk = false;
 
 const isMobile =
   /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
@@ -75,19 +84,18 @@ document.addEventListener("visibilitychange", () => {
 async function detectGpu() {
   if (!navigator.gpu) {
     $("gpu-status").textContent =
-      "当前浏览器不支持 WebGPU。电脑请用 Chrome / Edge 113 以上版本；iPhone / iPad 需要 iOS 26 以上的 Safari。";
+      "当前浏览器不支持 WebGPU，无法本地运行（可以改用 DeepSeek API）。电脑请用 Chrome / Edge 113 以上版本；iPhone / iPad 需要 iOS 26 以上的 Safari。";
     $("gpu-status").classList.add("error");
-    $("load").disabled = true;
     return;
   }
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) {
     $("gpu-status").textContent =
-      "没有找到可用的显卡（WebGPU adapter）。如果之前出现过显卡重置，浏览器会暂时禁用 WebGPU：请完全退出浏览器（包括后台进程）后重新打开。";
+      "没有找到可用的显卡（WebGPU adapter），无法本地运行（可以改用 DeepSeek API）。如果之前出现过显卡重置，浏览器会暂时禁用 WebGPU：请完全退出浏览器（包括后台进程）后重新打开。";
     $("gpu-status").classList.add("error");
-    $("load").disabled = true;
     return;
   }
+  gpuOk = true;
   f16 = adapter.features.has("shader-f16");
   $("gpu-status").textContent = f16
     ? "WebGPU 可用，支持 f16。"
@@ -125,6 +133,23 @@ function fillModelSelect() {
     if (saved.ctx) $("ctx").value = saved.ctx;
   }
   if (saved.mirror) $("mirror").checked = true;
+}
+
+function fillApiSettings() {
+  const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+  $("backend").value = saved.backend || (gpuOk ? "local" : "deepseek");
+  if (saved.apiModel) $("api-model").value = saved.apiModel;
+  $("api-key").value = localStorage.getItem(API_KEY_STORAGE) || "";
+  updateBackendUI();
+}
+
+function updateBackendUI() {
+  const api = $("backend").value === "deepseek";
+  $("local-opts").hidden = api;
+  $("local-hint").hidden = api;
+  $("api-opts").hidden = !api;
+  $("load").textContent = api ? "开始对话" : "加载模型";
+  $("load").disabled = !api && !gpuOk;
 }
 
 function selectSmallerModel() {
@@ -227,18 +252,42 @@ async function loadEngine(base, ctx, mirror) {
 }
 
 async function onLoad() {
-  const base = $("model").value;
-  const ctx = Number($("ctx").value);
-  const mirror = $("mirror").checked;
+  backend = $("backend").value;
   const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, model: base, ctx, mirror }));
-  budget = BUDGETS[ctx];
+  if (backend === "deepseek") {
+    apiKey = $("api-key").value.trim();
+    apiModel = $("api-model").value;
+    if (!apiKey) {
+      $("progress").hidden = false;
+      $("progress-text").textContent = "请先填写 DeepSeek API Key。";
+      $("progress-text").classList.add("error");
+      return;
+    }
+    if ($("remember-key").checked) localStorage.setItem(API_KEY_STORAGE, apiKey);
+    else localStorage.removeItem(API_KEY_STORAGE);
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, backend, apiModel }));
+    budget = BUDGETS.api;
+  } else {
+    const ctx = Number($("ctx").value);
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ ...settings, backend, model: $("model").value, ctx, mirror: $("mirror").checked }),
+    );
+    budget = BUDGETS[ctx];
+  }
+  // 换模型时先释放旧模型占用的显存
+  worker?.terminate();
+  worker = null;
+  engine = null;
 
   $("load").disabled = true;
   $("progress-text").classList.remove("error");
-  setProgress(0, "准备中…");
+  setProgress(0, backend === "deepseek" ? "加载原著检索…" : "准备中…");
   try {
-    await Promise.all([retriever ? null : loadRetriever(), loadEngine(base, ctx, mirror)]);
+    await Promise.all([
+      retriever ? null : loadRetriever(),
+      backend === "deepseek" ? null : loadEngine($("model").value, Number($("ctx").value), $("mirror").checked),
+    ]);
   } catch (err) {
     console.error(err);
     worker?.terminate();
@@ -253,7 +302,8 @@ async function onLoad() {
   $("progress").hidden = true;
   $("setup").hidden = true;
   $("chat").hidden = false;
-  $("model-name").textContent = `${modelId} · 上下文 ${ctx}`;
+  $("model-name").textContent =
+    backend === "deepseek" ? `DeepSeek · ${apiModel}` : `${modelId} · 上下文 ${$("ctx").value}`;
   if (!$("stage").options.length) for (const s of stages) $("stage").add(new Option(s.label, s.id));
   await switchStage(JSON.parse(localStorage.getItem(SETTINGS_KEY)).stage || stages[0].id);
   $("input").focus();
@@ -265,7 +315,7 @@ async function switchStage(id) {
   const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
   localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, stage: stage.id }));
   loadHistory();
-  await engine.resetChat();
+  await engine?.resetChat();
   renderAll();
 }
 
@@ -362,47 +412,111 @@ async function send(text) {
   bubble.textContent = "（若琳在想……）";
   scrollToBottom();
 
-  const messages = [{ role: "system", content: buildSystemPrompt(memories) }, ...recentHistory()];
-  const thinking = modelId.startsWith("Qwen3");
+  const recent = recentHistory();
+  let system = buildSystemPrompt(memories);
+  if (backend === "deepseek" && recent[0]?.role === "assistant") {
+    system += `\n\n（对话开始时，你对润彬说：“${recent.shift().content}”）`;
+  }
+  const messages = [{ role: "system", content: system }, ...recent];
 
   setGenerating(true);
   try {
-    const stream = await engine.chat.completions.create({
-      messages,
-      stream: true,
-      temperature: 0.6,
-      top_p: 0.8,
-      repetition_penalty: 1.05,
-      max_tokens: budget.maxTokens,
-      ...(thinking ? { extra_body: { enable_thinking: false } } : {}),
-    });
     let raw = "";
-    for await (const chunk of stream) {
-      raw += chunk.choices[0]?.delta?.content || "";
+    const stream = backend === "deepseek" ? deepseekStream(messages) : localStream(messages);
+    for await (const delta of stream) {
+      raw += delta;
       reply.content = stripThinking(raw);
       bubble.textContent = reply.content || "（若琳在想……）";
       scrollToBottom();
     }
   } catch (err) {
-    console.error(err);
-    history.pop();
-    if (/disposed|Device was lost|ModelNotLoaded/i.test(String(err))) {
-      $("input").value = text;
-      onGpuLost();
-      return;
-    }
-    bubble.textContent = `（出错了：${err.message || err}）`;
-    bubble.classList.add("error");
-    return;
+    if (err.name !== "AbortError") return onSendError(err, text, bubble);
   } finally {
     setGenerating(false);
   }
   wentHidden = false;
   reply.content = reply.content.trim();
+  if (!reply.content) {
+    history.pop();
+    renderAll();
+    $("input").value = text;
+    return;
+  }
   bubble.textContent = reply.content;
   history.push(reply);
   save();
   scrollToBottom();
+}
+
+async function* localStream(messages) {
+  const stream = await engine.chat.completions.create({
+    messages,
+    stream: true,
+    temperature: 0.6,
+    top_p: 0.8,
+    repetition_penalty: 1.05,
+    max_tokens: budget.maxTokens,
+    ...(modelId.startsWith("Qwen3") ? { extra_body: { enable_thinking: false } } : {}),
+  });
+  for await (const chunk of stream) yield chunk.choices[0]?.delta?.content || "";
+}
+
+async function* deepseekStream(messages) {
+  abortCtl = new AbortController();
+  const reasoner = apiModel === "deepseek-reasoner";
+  const res = await fetch(DEEPSEEK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: apiModel,
+      messages,
+      stream: true,
+      // reasoner 的 max_tokens 包含思考过程，且不支持 temperature
+      ...(reasoner ? { max_tokens: 8000 } : { max_tokens: budget.maxTokens, temperature: 1.3 }),
+    }),
+    signal: abortCtl.signal,
+  });
+  if (!res.ok) {
+    const detail = await res.json().then((j) => j.error?.message || "", () => "");
+    const hints = {
+      401: "API Key 无效，请点「换模型」重新填写。",
+      402: "DeepSeek 账户余额不足，请先充值。",
+      429: "请求太频繁，稍等一会儿再发。",
+    };
+    throw new Error(hints[res.status] || `DeepSeek 返回错误 ${res.status}：${detail}`);
+  }
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buf += value;
+    const lines = buf.split("\n");
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (data === "[DONE]") return;
+      const content = JSON.parse(data).choices?.[0]?.delta?.content;
+      if (content) yield content;
+    }
+  }
+}
+
+function onSendError(err, text, bubble) {
+  console.error(err);
+  history.pop();
+  if (backend === "local" && /disposed|Device was lost|ModelNotLoaded/i.test(String(err))) {
+    $("input").value = text;
+    onGpuLost();
+    return;
+  }
+  const network = err instanceof TypeError && backend === "deepseek";
+  bubble.textContent = network
+    ? "（连不上 api.deepseek.com，请检查网络后重发。）"
+    : `（出错了：${err.message || err}）`;
+  bubble.classList.add("error");
+  $("input").value = text;
 }
 
 // 显卡失效后回到加载面板重新加载，对话记录在 localStorage 里不会丢
@@ -443,7 +557,8 @@ function setGenerating(on) {
 $("composer").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (generating) {
-    engine.interruptGenerate();
+    if (backend === "deepseek") abortCtl?.abort();
+    else engine?.interruptGenerate();
     return;
   }
   const text = $("input").value.trim();
@@ -463,9 +578,19 @@ $("reset").addEventListener("click", async () => {
   if (generating || !confirm("清空这个时间点的对话记录？")) return;
   history = [{ role: "assistant", content: stage.greeting }];
   save();
-  await engine.resetChat();
+  await engine?.resetChat();
   renderAll();
 });
+
+$("change-model").addEventListener("click", () => {
+  if (generating) return;
+  $("chat").hidden = true;
+  $("setup").hidden = false;
+  $("progress").hidden = true;
+  window.scrollTo({ top: 0 });
+});
+
+$("backend").addEventListener("change", updateBackendUI);
 
 $("show-memories").addEventListener("change", (e) => {
   document.body.classList.toggle("show-memories", e.target.checked);
@@ -488,3 +613,4 @@ $("load").addEventListener("click", onLoad);
 
 await detectGpu();
 fillModelSelect();
+fillApiSettings();

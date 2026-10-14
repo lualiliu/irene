@@ -16,23 +16,44 @@
   </header>
 
   <section id="setup" class="card">
-    <p id="gpu-status" class="hint">正在检测 WebGPU…</p>
-    <label>模型
-      <select id="model"></select>
-    </label>
-    <label>上下文长度
-      <select id="ctx">
-        <option value="4096">4096（省显存，手机选这个）</option>
-        <option value="8192">8192（记得更多，需多约 0.5–1GB 显存）</option>
+    <label>运行方式
+      <select id="backend">
+        <option value="local">本地运行（WebGPU，免费，模型较小）</option>
+        <option value="deepseek">DeepSeek API（需要 API Key，效果好得多）</option>
       </select>
     </label>
-    <label class="inline"><input type="checkbox" id="mirror"> 经本地代理走国内镜像下载（需用 npm run serve 启动）</label>
+    <div id="local-opts" class="group">
+      <p id="gpu-status" class="hint">正在检测 WebGPU…</p>
+      <label>模型
+        <select id="model"></select>
+      </label>
+      <label>上下文长度
+        <select id="ctx">
+          <option value="4096">4096（省显存，手机选这个）</option>
+          <option value="8192">8192（记得更多，需多约 0.5–1GB 显存）</option>
+        </select>
+      </label>
+      <label class="inline"><input type="checkbox" id="mirror"> 经本地代理走国内镜像下载（需用 npm run serve 启动）</label>
+    </div>
+    <div id="api-opts" class="group" hidden>
+      <label>DeepSeek API Key
+        <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+      </label>
+      <label>模型
+        <select id="api-model">
+          <option value="deepseek-chat">deepseek-chat（推荐）</option>
+          <option value="deepseek-reasoner">deepseek-reasoner（先思考再回答，较慢）</option>
+        </select>
+      </label>
+      <label class="inline"><input type="checkbox" id="remember-key" checked> 在这个浏览器里记住 Key</label>
+      <p class="hint">在 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">platform.deepseek.com</a> 创建 Key。Key 只保存在本浏览器里，由浏览器直接发给 api.deepseek.com；原著检索仍在本地完成。</p>
+    </div>
     <button id="load">加载模型</button>
     <div id="progress" hidden>
       <div class="bar"><div id="bar-fill"></div></div>
       <p id="progress-text" class="hint"></p>
     </div>
-    <p class="hint">首次加载需下载 0.4–5GB 模型文件，之后会缓存在浏览器里。电脑需要 Chrome / Edge 113+，iPhone / iPad 需要 iOS 26+ 的 Safari。iPhone 14 请用 Qwen2.5-0.5B，更大的模型第一次回复时会重置显卡。</p>
+    <p id="local-hint" class="hint">首次加载需下载 0.4–5GB 模型文件，之后会缓存在浏览器里。电脑需要 Chrome / Edge 113+，iPhone / iPad 需要 iOS 26+ 的 Safari。iPhone 14 请用 Qwen2.5-0.5B，更大的模型第一次回复时会重置显卡。</p>
   </section>
 
   <main id="chat" hidden>
@@ -45,6 +66,7 @@
       <label class="inline">时间点 <select id="stage"></select></label>
       <label class="inline"><input type="checkbox" id="show-memories"> 显示检索到的原文片段</label>
       <button id="reset" type="button" class="link">清空对话</button>
+      <button id="change-model" type="button" class="link">换模型</button>
       <span id="model-name" class="hint"></span>
     </div>
   </main>

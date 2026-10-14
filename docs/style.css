@@ -44,8 +44,11 @@ h1 { margin: 0; font-size: 28px; letter-spacing: 0.3em; }
 label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
 label.inline { flex-direction: row; align-items: center; gap: 6px; }
 
-select, textarea, button { font: inherit; }
-select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.group { display: flex; flex-direction: column; gap: 12px; }
+
+select, textarea, button, input { font: inherit; }
+select, input[type="password"] { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.hint a { color: var(--accent); }
 
 button {
   background: var(--accent);
