@@ -97,7 +97,7 @@ function fillModelSelect() {
   }
   const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
   if (isMobile) $("model").value = "Qwen2.5-1.5B-Instruct";
-  if (saved.model) $("model").value = saved.model;
+  if ([...$("model").options].some((o) => o.value === saved.model)) $("model").value = saved.model;
   if (saved.ctx) $("ctx").value = saved.ctx;
   if (saved.mirror) $("mirror").checked = true;
 }
