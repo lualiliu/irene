@@ -1,0 +1,15 @@
+{
+  "name": "guoruolin-chat",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "extract": "python scripts/extract.py",
+    "model": "powershell -ExecutionPolicy Bypass -File scripts/download-model.ps1",
+    "index": "node scripts/build-index.mjs",
+    "build": "npm run extract && npm run index",
+    "serve": "python scripts/serve.py 8080"
+  },
+  "devDependencies": {
+    "@huggingface/transformers": "4.3.1"
+  }
+}

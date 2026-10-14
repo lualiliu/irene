@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+  <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
+  <meta name="bingbot" content="noindex, nofollow, noarchive, nosnippet">
+  <title>与若琳对话 · 光与太阳，风筝与风</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>若琳</h1>
+    <p class="subtitle">《光与太阳，风筝与风》 · 你是润彬</p>
+  </header>
+
+  <section id="setup" class="card">
+    <p id="gpu-status" class="hint">正在检测 WebGPU…</p>
+    <label>模型
+      <select id="model"></select>
+    </label>
+    <label>上下文长度
+      <select id="ctx">
+        <option value="4096">4096（省显存）</option>
+        <option value="8192">8192（记得更多，需多约 0.5–1GB 显存）</option>
+      </select>
+    </label>
+    <label class="inline"><input type="checkbox" id="mirror"> 经本地代理走国内镜像下载（需用 npm run serve 启动）</label>
+    <button id="load">加载模型</button>
+    <div id="progress" hidden>
+      <div class="bar"><div id="bar-fill"></div></div>
+      <p id="progress-text" class="hint"></p>
+    </div>
+    <p class="hint">首次加载需下载 1–5GB 模型文件，之后会缓存在浏览器里。需要桌面版 Chrome / Edge 113+ 及独立或较新的集成显卡。</p>
+  </section>
+
+  <main id="chat" hidden>
+    <div id="log"></div>
+    <form id="composer">
+      <textarea id="input" rows="2" placeholder="和若琳说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <button id="send" type="submit">发送</button>
+    </form>
+    <div class="toolbar">
+      <label class="inline">时间点 <select id="stage"></select></label>
+      <label class="inline"><input type="checkbox" id="show-memories"> 显示检索到的原文片段</label>
+      <button id="reset" type="button" class="link">清空对话</button>
+      <span id="model-name" class="hint"></span>
+    </div>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
