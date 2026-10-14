@@ -7,7 +7,8 @@ const MODELS = [
   ["Qwen3.5-4B", "6GB 以上显存推荐"],
   ["Qwen3.5-9B", "8GB 以上显存，效果最好"],
   ["Qwen2.5-1.5B-Instruct", "iPhone / 手机推荐"],
-  ["Qwen3-0.6B", "最省内存，但容易答非所问"],
+  ["Qwen3-0.6B", "容易答非所问"],
+  ["Qwen2.5-0.5B-Instruct", "最省内存，手机撑不住时用"],
   ["Qwen3-1.7B", ""],
   ["Qwen3-4B", ""],
   ["Qwen3-8B", ""],
@@ -29,6 +30,7 @@ const SETTINGS_KEY = "guoruolin-chat-settings-v2";
 const $ = (id) => document.getElementById(id);
 
 let engine = null;
+let worker = null;
 let retriever = null;
 let persona = "";
 let stages = [];
@@ -58,6 +60,15 @@ let f16 = false;
 const isMobile =
   /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+// iPhone 上超过约 2GB 的模型生成时会被系统回收显卡；Qwen3.5 实际占用远超标称值
+const MOBILE_MAX_MB = 2000;
+
+// iOS 切到后台或锁屏后会回收 WebGPU 设备
+let wentHidden = false;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) wentHidden = true;
+});
 
 async function detectGpu() {
   if (!navigator.gpu) {
@@ -91,15 +102,33 @@ function fillModelSelect() {
   for (const [base, note] of MODELS) {
     const record = known.get(fullModelId(base));
     if (!record) continue;
+    if (isMobile && (base.startsWith("Qwen3.5") || record.vram_required_MB > MOBILE_MAX_MB)) continue;
     const gb = (record.vram_required_MB / 1024).toFixed(1);
     const opt = new Option(`${base}（约 ${gb}GB${note ? "，" + note : ""}）`, base);
+    opt.dataset.mb = record.vram_required_MB;
     $("model").add(opt);
   }
   const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-  if (isMobile) $("model").value = "Qwen2.5-1.5B-Instruct";
-  if ([...$("model").options].some((o) => o.value === saved.model)) $("model").value = saved.model;
-  if (saved.ctx) $("ctx").value = saved.ctx;
+  const options = [...$("model").options].map((o) => o.value);
+  if (isMobile && options.includes("Qwen2.5-1.5B-Instruct")) $("model").value = "Qwen2.5-1.5B-Instruct";
+  if (options.includes(saved.model)) $("model").value = saved.model;
+  if (isMobile) {
+    $("ctx").value = "4096";
+    $("ctx").disabled = true;
+  } else if (saved.ctx) {
+    $("ctx").value = saved.ctx;
+  }
   if (saved.mirror) $("mirror").checked = true;
+}
+
+function selectSmallerModel() {
+  const sel = $("model");
+  const current = Number(sel.selectedOptions[0]?.dataset.mb);
+  const smaller = [...sel.options]
+    .filter((o) => Number(o.dataset.mb) < current)
+    .sort((a, b) => b.dataset.mb - a.dataset.mb)[0];
+  if (smaller) sel.value = smaller.value;
+  return smaller?.value;
 }
 
 // ---------- 加载 ----------
@@ -168,7 +197,7 @@ async function loadEngine(base, ctx, mirror) {
     workerUrl.searchParams.set("mirror", "1");
     workerUrl.searchParams.set("mirrorBase", MIRROR);
   }
-  const worker = new Worker(workerUrl, { type: "module" });
+  worker = new Worker(workerUrl, { type: "module" });
   engine = new webllm.WebWorkerMLCEngine(worker, {
     appConfig,
     initProgressCallback: (p) => setProgress(p.progress, p.text),
@@ -198,20 +227,26 @@ async function onLoad() {
   budget = BUDGETS[ctx];
 
   $("load").disabled = true;
+  $("progress-text").classList.remove("error");
   setProgress(0, "准备中…");
   try {
-    await Promise.all([loadRetriever(), loadEngine(base, ctx, mirror)]);
+    await Promise.all([retriever ? null : loadRetriever(), loadEngine(base, ctx, mirror)]);
   } catch (err) {
     console.error(err);
+    worker?.terminate();
+    worker = null;
     $("progress-text").textContent = `加载失败：${err.message || err}`;
     $("progress-text").classList.add("error");
     $("load").disabled = false;
     return;
   }
+  wentHidden = false;
+  $("load").disabled = false;
+  $("progress").hidden = true;
   $("setup").hidden = true;
   $("chat").hidden = false;
   $("model-name").textContent = `${modelId} · 上下文 ${ctx}`;
-  for (const s of stages) $("stage").add(new Option(s.label, s.id));
+  if (!$("stage").options.length) for (const s of stages) $("stage").add(new Option(s.label, s.id));
   await switchStage(JSON.parse(localStorage.getItem(SETTINGS_KEY)).stage || stages[0].id);
   $("input").focus();
 }
@@ -342,25 +377,50 @@ async function send(text) {
     }
   } catch (err) {
     console.error(err);
-    const gpuLost = /disposed|Device was lost|ModelNotLoaded/i.test(String(err));
-    bubble.textContent = gpuLost
-      ? "（显卡被重置了，模型已失效。通常是显存不够或显卡太老。请刷新页面，换一个更小的模型，并关掉其他占用显卡的网页或程序。）"
-      : `（出错了：${err.message || err}）`;
-    bubble.classList.add("error");
     history.pop();
-    if (gpuLost) {
-      $("input").disabled = true;
-      $("send").disabled = true;
+    if (/disposed|Device was lost|ModelNotLoaded/i.test(String(err))) {
+      $("input").value = text;
+      onGpuLost();
+      return;
     }
+    bubble.textContent = `（出错了：${err.message || err}）`;
+    bubble.classList.add("error");
     return;
   } finally {
     setGenerating(false);
   }
+  wentHidden = false;
   reply.content = reply.content.trim();
   bubble.textContent = reply.content;
   history.push(reply);
   save();
   scrollToBottom();
+}
+
+// 显卡失效后回到加载面板重新加载，对话记录在 localStorage 里不会丢
+function onGpuLost() {
+  worker?.terminate();
+  worker = null;
+  engine = null;
+  let msg;
+  if (wentHidden) {
+    msg = "页面切到后台或锁屏后，系统回收了显卡，模型失效了。点「加载模型」重新加载即可，模型文件已缓存，不用重新下载。";
+  } else {
+    const smaller = selectSmallerModel();
+    msg = isMobile
+      ? "手机内存不够，系统强制回收了显卡，模型失效了。请先关掉其他 App 和 Safari 标签页，"
+      : "显卡被重置了，模型已失效。通常是显存不够或显卡太老。请关掉其他占用显卡的网页或程序，";
+    msg += smaller ? `已帮你换成更小的 ${smaller}，点「加载模型」重试。` : "然后点「加载模型」重试。";
+  }
+  msg += "如果仍然失败，请完全退出浏览器后重新打开。";
+  $("chat").hidden = true;
+  $("setup").hidden = false;
+  $("progress").hidden = false;
+  $("bar-fill").style.width = "0%";
+  $("progress-text").textContent = msg;
+  $("progress-text").classList.add("error");
+  $("load").disabled = false;
+  window.scrollTo({ top: 0 });
 }
 
 function setGenerating(on) {
