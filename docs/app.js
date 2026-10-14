@@ -6,8 +6,7 @@ const MODELS = [
   ["Qwen3.5-2B", "4GB 显存推荐"],
   ["Qwen3.5-4B", "6GB 以上显存推荐"],
   ["Qwen3.5-9B", "8GB 以上显存，效果最好"],
-  ["Qwen3.5-0.8B", "iPhone / 手机推荐"],
-  ["Qwen2.5-1.5B-Instruct", "手机可用，回答更稳但更慢"],
+  ["Qwen2.5-1.5B-Instruct", "iPhone / 手机推荐"],
   ["Qwen3-0.6B", "最省内存，但容易答非所问"],
   ["Qwen3-1.7B", ""],
   ["Qwen3-4B", ""],
@@ -97,7 +96,7 @@ function fillModelSelect() {
     $("model").add(opt);
   }
   const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-  if (isMobile) $("model").value = "Qwen3.5-0.8B";
+  if (isMobile) $("model").value = "Qwen2.5-1.5B-Instruct";
   if (saved.model) $("model").value = saved.model;
   if (saved.ctx) $("ctx").value = saved.ctx;
   if (saved.mirror) $("mirror").checked = true;
